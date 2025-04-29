@@ -376,6 +376,9 @@ app.post('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
     // Check if the Admin exists
     let admin = await UserCreation.findOne({ email, role: 'Admin' });
 
+    const randomNumber = Math.floor(100 + Math.random() * 900);
+    const userId = `SuperAdmin${randomNumber}`;
+
     if (!admin) {
       // If Admin does not exist, create a new Admin user
       const userId = new mongoose.Types.ObjectId(); // Generate new ObjectId for Admin
@@ -400,7 +403,7 @@ app.post('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
         from: 'gounishivakishorreddy@gmail.com',
         to: adminEmail,
         subject: 'New Admin Account Created',
-        text: `Your new admin account has been created successfully. Your User ID: ${userId} and password: dummy234.`,
+        text: `Your new admin account has been created successfully. Your User ID: ${userId} .`,
       };
 
       transporter.sendMail(mailOptions, (error, info) => {
