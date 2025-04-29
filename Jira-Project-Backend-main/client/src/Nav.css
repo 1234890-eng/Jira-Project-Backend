@@ -1,0 +1,26 @@
+.nav {
+    background-color: #1e1e2f;
+    padding: 15px 30px;
+    display: flex;
+    justify-content: flex-end;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+  
+  .nav-items {
+    list-style: none;
+    display: flex;
+    gap: 20px;
+  }
+  
+  .nav-items li a {
+    color: white;
+    text-decoration: none;
+    font-size: 1rem;
+    font-family: 'Segoe UI', sans-serif;
+    transition: color 0.3s ease;
+  }
+  
+  .nav-items li a:hover {
+    color: #00bcd4;
+  }
+  
