@@ -13,11 +13,11 @@ const Client = require('./Model/Client');
 const setupSwaggerDocs = require('./swagger');
 //const verifyToken = require('./verifyToken')
 const MethodologyName = require('./MethodologyName')
-const Issue = require('./Issue');
-const Status = require('./Status');
-const Priority = require('./Priority');
-const TypeOfOrganisation = require('./TypeOfOragnisation');
-const ActivateStatus = require('./ActivateStatus');
+const Issue = require('./Model/Issue');
+const Status = require('./Model/Status');
+const Priority = require('./Model/Priority');
+const TypeOfOrganisation = require('./Model/TypeOfOrganization');
+const ActivateStatus = require('./Model/ActiveStatus');
 const Profile = require('./Profile');
 const Role = require('./Model/Role');
 const MethodologyField = require('./methodologyField')
@@ -255,46 +255,49 @@ app.post('/reset-password', verifyToken, async (req, res) => {
 
 
 
-// Login Route (Using userId and password)
 app.post('/login', async (req, res) => {
   try {
     const { userId, password } = req.body;
 
-    // Check if userId and password are provided
     if (!userId || !password) {
       return res.status(400).json({ message: 'userId and password are required' });
     }
 
-    // Find the user by userId
+    // Find the user
     const user = await UserCreation.findOne({ userId });
     if (!user) {
       return res.status(401).json({ message: 'Invalid userId or password' });
     }
 
-    // Compare the password with the hashed password stored in the database
+    // Check if the user's password matches
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid userId or password' });
     }
 
-    // Generate a JWT token with the userId and role
+    // If Admin, check if their associated client is active
+    if (user.role === 'Admin') {
+      const client = await Client.findOne({ email: user.email });
+
+      if (client && !client.isActive) {
+        return res.status(403).json({ message: 'Your organization is deactivated. Please contact SuperAdmin.' });
+      }
+    }
+
+    // Generate a token if everything is valid
     const token = jwt.sign(
-      { userId: user.userId, role: user.role }, // Include userId and role in token payload
-      'your-secret-key', // Secret key for signing the token
-      { expiresIn: '1h' } // Token expiration time (1 hour)
+      { userId: user.userId, role: user.role },
+      'your-secret-key',
+      { expiresIn: '1h' }
     );
 
-    // Respond with the token
-    res.status(200).json({
-      message: 'Login successful',
-      token: token, // Send the token to the client
-    });
-
+    res.status(200).json({ message: 'Login successful', token });
   } catch (error) {
     console.error('Error logging in:', error);
     res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
 });
+
 
 const checkRole = (...allowedRoles) => {
   return (req, res, next) => {
@@ -306,22 +309,9 @@ const checkRole = (...allowedRoles) => {
 };
 
 
-app.get('/super-admin-dashboard', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
-  // Check if the userId matches the one in the token, in case you want to enforce user-specific access
-  const userIdFromToken = req.userId;  // This userId comes from the token
-
-  // In case this is a user-specific dashboard, you can fetch the user from DB
-  const user = await UserCreation.findOne({ userId: userIdFromToken });
-  
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  res.status(200).json({ message: 'Welcome to the Super Admin Dashboard' });
-});
-
-app.get('/admin-dashboard', verifyToken, checkRole('Admin'), async (req, res) => {
+app.get('/dashboard', verifyToken, async (req, res) => {
   const userIdFromToken = req.userId;
+  const userRoleFromToken = req.userRole;
 
   try {
     const user = await UserCreation.findOne({ userId: userIdFromToken });
@@ -330,24 +320,22 @@ app.get('/admin-dashboard', verifyToken, checkRole('Admin'), async (req, res) =>
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.status(200).json({ message: 'Welcome to the Admin Dashboard' });
+    if (userRoleFromToken === 'SuperAdmin') {
+      return res.status(200).json({ message: 'Welcome to the Super Admin Dashboard' });
+    } else if (userRoleFromToken === 'Admin') {
+      return res.status(200).json({ message: 'Welcome to the Admin Dashboard' });
+    } else {
+      return res.status(403).json({ message: 'Access Denied: Invalid Role' });
+    }
+
   } catch (error) {
-    console.error('Error accessing Admin Dashboard:', error);
+    console.error('Error accessing Dashboard:', error);
     res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
 
-/*app.get('/myprofile', middleware, async (req, res) => {
-  try {
-    const user = await SuperAdmin.findById(req.user.id).select('-password -confirmpassword');
-    if (!user) return res.status(404).send('User not found');
-    res.json(user);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error');
-  }
-});*/
+
 
 
 app.post('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
@@ -423,7 +411,7 @@ app.post('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   }
 });
 
-app.get('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
+app.get('/getclients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   try {
     // Fetch all clients
     const clients = await Client.find(); // You can add filters if needed, like pagination
@@ -440,11 +428,10 @@ app.get('/clients', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
 });
 
 
-app.get('/clients/:id', async (req, res) => {
+app.get('/getclients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   try {
     const clientId = req.params.id;
 
-    // Validate ObjectId format
     if (!clientId.match(/^[0-9a-fA-F]{24}$/)) {
       return res.status(400).json({ error: 'Invalid client ID format' });
     }
@@ -461,6 +448,7 @@ app.get('/clients/:id', async (req, res) => {
     res.status(500).json({ error: 'Server Error' });
   }
 });
+
 
 app.put('/clients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   try {
@@ -493,7 +481,7 @@ app.put('/clients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res) =
 });
 
 
-app.delete('/clients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
+app.delete('/deleteclients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -516,33 +504,37 @@ app.delete('/clients/:id', verifyToken, checkRole('SuperAdmin'), async (req, res
 
 
 // Deactivate client
-app.patch('/clients/:id/toggle-status', async (req, res) => {
+app.patch('/activateclients/:id/status', verifyToken, checkRole('SuperAdmin'), async (req, res) => {
   try {
     const clientId = req.params.id;
+    const { isActive } = req.body;
 
-    // Validate Mongo ObjectId format
     if (!clientId.match(/^[0-9a-fA-F]{24}$/)) {
       return res.status(400).json({ error: 'Invalid client ID format' });
     }
 
-    const client = await Client.findById(clientId);
-    if (!client) {
+    // Validate isActive is boolean
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ error: 'isActive must be true or false' });
+    }
+
+    const updatedClient = await Client.findByIdAndUpdate(
+      clientId,
+      { isActive },
+      { new: true }
+    );
+
+    if (!updatedClient) {
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    // Toggle isActive status
-    client.isActive = !client.isActive;
-    await client.save();
-
-    res.status(200).json({
-      message: `Client ${client.isActive ? 'activated' : 'deactivated'} successfully`,
-      client
-    });
+    res.status(200).json({ message: `Client ${isActive ? 'activated' : 'deactivated'} successfully`, client: updatedClient });
   } catch (error) {
-    console.error('Toggle Client Status Error:', error);
+    console.error('Activate/Deactivate Client Error:', error);
     res.status(500).json({ error: 'Server Error' });
   }
 });
+
 
 app.post('/roles', verifyToken, checkRole("SuperAdmin", "Admin"), async (req, res) => {
   try {
@@ -590,6 +582,44 @@ app.get('/getroles', verifyToken, async (req, res) => {
   }
 });
 
+app.get('/getroles/:id', verifyToken, async (req, res) => {
+  try {
+    const roleId = req.params.id;
+
+    // Validate ObjectId format
+    if (!roleId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ message: 'Invalid Role ID format' });
+    }
+
+    const role = await Role.findById(roleId);
+
+    if (!role) {
+      return res.status(404).json({ message: 'Role not found' });
+    }
+
+    // Access control: check if user can see this role
+    if (
+      req.userRole === 'SuperAdmin' && role.createdByRole === 'SuperAdmin'
+    ) {
+      return res.status(200).json(role);
+    }
+
+    if (
+      req.userRole === 'Admin' &&
+      (role.createdByRole === 'Admin' || role.createdByRole === 'SuperAdmin')
+    ) {
+      return res.status(200).json(role);
+    }
+
+    return res.status(403).json({ message: 'Access denied to this role' });
+
+  } catch (error) {
+    console.error('Error fetching role by ID:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
 app.put('/editroles/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -632,7 +662,7 @@ app.delete('/deleteroles/:id', verifyToken, async (req, res) => {
 
     if (req.userRole === 'Admin' && role.createdByRole === 'SuperAdmin') {
       return res.status(403).json({ message: 'Admins cannot delete SuperAdmin-created roles' });
-    }
+    } 
 
     await Role.findByIdAndDelete(req.params.id);
     res.status(200).json({ message: 'Role deleted successfully' });
@@ -641,7 +671,7 @@ app.delete('/deleteroles/:id', verifyToken, async (req, res) => {
     console.error('Error deleting role:', error);
     res.status(500).json({ message: 'Internal Server Error' });
   }
-});
+}); 
 
 
 
@@ -656,7 +686,6 @@ app.post('/methodology-names', async (req, res) => {
 
     const newName = new MethodologyName({ name });
     await newName.save();
-
     res.status(201).json({ message: 'Methodology name created', newName });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -669,7 +698,7 @@ app.post('/methodology-names', async (req, res) => {
 app.post('/methodology-fields/by-methodology/:name', async (req, res) => {
   try {
     const {
-      taskTitle, 
+      taskTitle,  
       dueDate, 
       priority, 
       status, 
@@ -817,459 +846,493 @@ app.get('/methodology-fields/:methodologyNameId', async (req, res) => {
 });
 
 
-
-app.post('/issues', async (req, res) => {
+app.post('/issues', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    if (!name || name.length < 3) {
-      return res.status(400).json({ error: 'Issue name is required and must be at least 3 characters long' });
+    if (!name) {
+      return res.status(400).json({ message: 'Issue name is required' });
     }
 
-    const existing = await Issue.findOne({ name });
-    if (existing) {
-      return res.status(409).json({ error: 'Issue with this name already exists' });
-    }
+    const newIssue = new Issue({
+      name,
+      createdByUserId: req.userId,
+      createdByRole: req.userRole
+    });
 
-    const issue = new Issue({ name });
-    await issue.save();
-    res.status(201).json({ message: 'Issue created successfully', issue });
+    await newIssue.save();
+    res.status(201).json({ message: 'Issue created successfully', issue: newIssue });
   } catch (error) {
-    console.error('Create Issue Error:', error.message);
-    res.status(500).json({ error: 'Server Error' });
+    console.error('Create Issue Error:', error);
+    res.status(500).json({ message: 'Server Error' });
   }
 });
 
-app.get('/issues', async (req, res) => {
+
+app.get('/createissues', verifyToken, async (req, res) => {
   try {
-    const issues = await Issue.find().sort({ createdAt: -1 });
-    res.status(200).json({ issues });
+    let issues;
+
+    if (req.userRole === 'SuperAdmin') {
+      // SuperAdmin sees only their own issues
+      issues = await Issue.find({ createdByRole: 'SuperAdmin' });
+    } else if (req.userRole === 'Admin') {
+      // Admin sees both their own and SuperAdmin's issues
+      issues = await Issue.find({
+        $or: [
+          { createdByRole: 'Admin' },
+          { createdByRole: 'SuperAdmin' }
+        ]
+      });
+    } else {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    res.status(200).json(issues);
   } catch (error) {
-    console.error('Get Issues Error:', error.message);
-    res.status(500).json({ error: 'Server Error' });
+    console.error('Get Issues Error:', error);
+    res.status(500).json({ message: 'Server Error' });
   }
 });
 
-app.get('/issues/:id', async (req, res) => {
+
+app.put('/editissues/:id', verifyToken, async (req, res) => {
   try {
+    const { name } = req.body;
     const { id } = req.params;
 
-    // Validate Mongo ObjectId
-    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
-      return res.status(400).json({ error: 'Invalid issue ID format' });
+    if (!name) {
+      return res.status(400).json({ message: 'Issue name is required' });
     }
 
     const issue = await Issue.findById(id);
+
     if (!issue) {
-      return res.status(404).json({ error: 'Issue not found' });
+      return res.status(404).json({ message: 'Issue not found' });
     }
 
-    res.status(200).json({ issue });
+    // Admin can only edit their own issues
+    if (req.userRole === 'Admin' && issue.createdByRole !== 'Admin') {
+      return res.status(403).json({ message: 'Admins can only edit their own issues' });
+    }
+
+    issue.name = name;
+    await issue.save();
+
+    res.status(200).json({ message: 'Issue updated successfully', issue });
   } catch (error) {
-    console.error('Get Issue Error:', error.message);
-    res.status(500).json({ error: 'Server Error' });
+    console.error('Update Issue Error:', error);
+    res.status(500).json({ message: 'Server Error' });
   }
 });
 
 
-app.put('/issues/:id', async (req, res) => {
+app.delete('/deleteissues/:id', verifyToken, async (req, res) => {
   try {
-    const { name } = req.body;
+    const { id } = req.params;
 
-    if (!name || name.length < 3) {
-      return res.status(400).json({ error: 'New issue name is required and must be at least 3 characters long' });
-    }
-
-    const issue = await Issue.findByIdAndUpdate(
-      req.params.id,
-      { name },
-      { new: true }
-    );
+    const issue = await Issue.findById(id);
 
     if (!issue) {
-      return res.status(404).json({ error: 'Issue not found' });
+      return res.status(404).json({ message: 'Issue not found' });
     }
 
-    res.status(200).json({ message: 'Issue name updated', issue });
-  } catch (error) {
-    console.error('Update Issue Error:', error.message);
-    res.status(500).json({ error: 'Server Error' });
-  }
-});
-
-app.delete('/issues/:id', async (req, res) => {
-  try {
-    const deleted = await Issue.findByIdAndDelete(req.params.id);
-
-    if (!deleted) {
-      return res.status(404).json({ error: 'Issue not found' });
+    // Admin can only delete their own issues
+    if (req.userRole === 'Admin' && issue.createdByRole !== 'Admin') {
+      return res.status(403).json({ message: 'Admins can only delete their own issues' });
     }
 
+    await issue.deleteOne();
     res.status(200).json({ message: 'Issue deleted successfully' });
   } catch (error) {
-    console.error('Delete Issue Error:', error.message);
-    res.status(500).json({ error: 'Server Error' });
+    console.error('Delete Issue Error:', error);
+    res.status(500).json({ message: 'Server Error' });
   }
 });
+
 
 // routes/statusRoutes.js
 
 // Create Status
-app.post('/status', async (req, res) => {
+app.post('/createstatus', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const existing = await Status.findOne({ name });
-    if (existing) return res.status(400).json({ message: "Status already exists" });
+    if (!name || name.trim() === '') {
+      return res.status(400).json({ message: 'Status name is required' });
+    }
 
-    const status = new Status({ name });
-    await status.save();
+    const newStatus = new Status({
+      name,
+      createdBy: req.userId,        // From verifyToken middleware
+      createdByRole: req.userRole   // 'Admin' or 'SuperAdmin'
+    });
 
-    res.status(201).json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await newStatus.save();
+
+    res.status(201).json({ message: 'Status created successfully', status: newStatus });
+  } catch (error) {
+    console.error('Create Status Error:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
+app.get('/getstatus', verifyToken, async (req, res) => {
+  try {
+    let statuses;
+
+    if (req.userRole === 'Admin') {
+      statuses = await Status.find({
+        $or: [
+          { createdByRole: 'Admin' },
+          { createdByRole: 'SuperAdmin' }
+        ]
+      });
+    } else if (req.userRole === 'SuperAdmin') {
+      statuses = await Status.find({ createdByRole: 'SuperAdmin' });
+    } else {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    res.status(200).json(statuses);
+  } catch (error) {
+    console.error('Fetch Status Error:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
 
 // Get All Statuses
-app.get('/status', async (req, res) => {
+
+// Edit Status by ID
+app.put('/editstatus/:id', verifyToken, async (req, res) => {
   try {
-    const statuses = await Status.find();
-    res.json(statuses);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { id } = req.params;
+    const { name } = req.body;
+
+    const status = await Status.findById(id);
+    if (!status) return res.status(404).json({ message: 'Status not found' });
+
+    if (req.userRole === 'Admin' && status.createdByRole !== 'Admin') {
+      return res.status(403).json({ message: 'Admins cannot edit SuperAdmin-created statuses' });
+    }
+
+    status.name = name || status.name;
+    await status.save();
+
+    res.status(200).json({ message: 'Status updated successfully', status });
+  } catch (error) {
+    console.error('Update Status Error:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
-app.get('/status/:id', async (req, res) => {
+
+// Delete Status by ID
+app.delete('/deletestatuses/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Validate MongoDB ObjectId format
-    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
-      return res.status(400).json({ error: 'Invalid status ID format' });
-    }
-
     const status = await Status.findById(id);
-    if (!status) {
-      return res.status(404).json({ error: 'Status not found' });
+    if (!status) return res.status(404).json({ message: 'Status not found' });
+
+    if (req.userRole === 'Admin' && status.createdByRole !== 'Admin') {
+      return res.status(403).json({ message: 'Admins cannot delete SuperAdmin-created statuses' });
     }
 
-    res.status(200).json({ status });
-  } catch (err) {
-    console.error('Get Status by ID Error:', err.message);
-    res.status(500).json({ error: 'Server Error' });
-  }
-});
-
-
-// Edit Status by ID
-app.put('/status/:id', async (req, res) => {
-  try {
-    const { name } = req.body;
-
-    const status = await Status.findByIdAndUpdate(
-      req.params.id,
-      { name },
-      { new: true }
-    );
-
-    if (!status) return res.status(404).json({ message: "Status not found" });
-
-    res.json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Delete Status by ID
-app.delete('/status/:id', async (req, res) => {
-  try {
-    const status = await Status.findByIdAndDelete(req.params.id);
-    if (!status) return res.status(404).json({ message: "Status not found" });
-
-    res.json({ message: "Status deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await Status.findByIdAndDelete(id);
+    res.status(200).json({ message: 'Status deleted successfully' });
+  } catch (error) {
+    console.error('Delete Status Error:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
 
 // 👉 Create Priority
-app.post('/priority', async (req, res) => {
+app.post('/createpriority', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const existing = await Priority.findOne({ name });
-    if (existing) return res.status(400).json({ message: "Priority already exists" });
+    if (!name) {
+      return res.status(400).json({ message: 'Priority name is required' });
+    }
 
-    const priority = new Priority({ name });
-    await priority.save();
+    const newPriority = new Priority({
+      name,
+      createdBy: req.userId,
+      createdByRole: req.userRole
+    });
 
-    res.status(201).json(priority);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await newPriority.save();
+
+    res.status(201).json({ message: 'Priority created successfully', priority: newPriority });
+  } catch (error) {
+    console.error('Error creating priority:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
 
 // 👉 Get All Priorities
-app.get('/priority', async (req, res) => {
+app.get('/getpriority', verifyToken, async (req, res) => {
   try {
-    const priorities = await Priority.find();
-    res.json(priorities);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    let query = {};
+
+    if (req.userRole === 'Admin') {
+      query.createdByRole = { $in: ['Admin', 'SuperAdmin'] };
+    } else if (req.userRole === 'SuperAdmin') {
+      query.createdByRole = 'SuperAdmin';
+    } else {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const priorities = await Priority.find(query);
+    res.status(200).json(priorities);
+  } catch (error) {
+    console.error('Error fetching priorities:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
-app.get('/priority/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Validate MongoDB ObjectId
-    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
-      return res.status(400).json({ error: 'Invalid priority ID format' });
-    }
-
-    const priority = await Priority.findById(id);
-    if (!priority) {
-      return res.status(404).json({ error: 'Priority not found' });
-    }
-
-    res.status(200).json({ priority });
-  } catch (err) {
-    console.error('Get Priority by ID Error:', err.message);
-    res.status(500).json({ error: 'Server Error' });
-  }
-});
 
 
 // 👉 Edit Priority by ID
-app.put('/priority/:id', async (req, res) => {
+app.put('/editpriority/:id', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const priority = await Priority.findByIdAndUpdate(
-      req.params.id,
-      { name },
-      { new: true }
-    );
+    const priority = await Priority.findById(req.params.id);
+    if (!priority) {
+      return res.status(404).json({ message: 'Priority not found' });
+    }
 
-    if (!priority) return res.status(404).json({ message: "Priority not found" });
+    if (req.userRole === 'Admin' && priority.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot edit priorities created by SuperAdmin' });
+    }
 
-    res.json(priority);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    priority.name = name || priority.name;
+    await priority.save();
+
+    res.status(200).json({ message: 'Priority updated successfully', priority });
+  } catch (error) {
+    console.error('Error updating priority:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
-// 👉 Delete Priority by ID
-app.delete('/priority/:id', async (req, res) => {
-  try {
-    const priority = await Priority.findByIdAndDelete(req.params.id);
-    if (!priority) return res.status(404).json({ message: "Priority not found" });
 
-    res.json({ message: "Priority deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+// 👉 Delete Priority by ID
+app.delete('/deletepriority/:id', verifyToken, async (req, res) => {
+  try {
+    const priority = await Priority.findById(req.params.id);
+    if (!priority) {
+      return res.status(404).json({ message: 'Priority not found' });
+    }
+
+    if (req.userRole === 'Admin' && priority.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot delete priorities created by SuperAdmin' });
+    }
+
+    await Priority.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Priority deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting priority:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
 // 👉 Create Type of Organisation
-app.post('/type-of-organisation', async (req, res) => {
+app.post('/typeoforganization', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const existing = await TypeOfOrganisation.findOne({ name });
-    if (existing) return res.status(400).json({ message: "Type already exists" });
+    if (!name) {
+      return res.status(400).json({ message: 'Name of the organization type is required' });
+    }
 
-    const type = new TypeOfOrganisation({ name });
-    await type.save();
+    const newTypeOfOrganization = new TypeOfOrganization({
+      name,
+      createdBy: req.userId,
+      createdByRole: req.userRole
+    });
 
-    res.status(201).json(type);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await newTypeOfOrganization.save();
+
+    res.status(201).json({ message: 'Type of Organization created successfully', typeOfOrganization: newTypeOfOrganization });
+  } catch (error) {
+    console.error('Error creating Type of Organization:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
 
 // 👉 Get All Types of Organisation
-app.get('/type-of-organisation', async (req, res) => {
+app.get('/typeoforganization', verifyToken, async (req, res) => {
   try {
-    const types = await TypeOfOrganisation.find();
-    res.json(types);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    let query = {};
 
-app.get('/type-of-organisation/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Validate ObjectId
-    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
-      return res.status(400).json({ error: 'Invalid type ID format' });
+    if (req.userRole === 'Admin') {
+      query.createdByRole = { $in: ['Admin', 'SuperAdmin'] };
+    } else if (req.userRole === 'SuperAdmin') {
+      query.createdByRole = 'SuperAdmin';
+    } else {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
-    const type = await TypeOfOrganisation.findById(id);
-    if (!type) {
-      return res.status(404).json({ error: 'Type of Organisation not found' });
-    }
-
-    res.status(200).json({ type });
+    const typeOfOrganizations = await TypeOfOrganization.find(query);
+    res.status(200).json(typeOfOrganizations);
   } catch (error) {
-    console.error('Error fetching Type of Organisation by ID:', error.message);
-    res.status(500).json({ error: 'Server Error' });
+    console.error('Error fetching Type of Organization:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
+
 
 
 // 👉 Edit Type of Organisation by ID
-app.put('/type-of-organisation/:id', async (req, res) => {
+app.put('/typeoforganization/:id', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const updated = await TypeOfOrganisation.findByIdAndUpdate(
-      req.params.id,
-      { name },
-      { new: true }
-    );
+    const typeOfOrganization = await TypeOfOrganization.findById(req.params.id);
+    if (!typeOfOrganization) {
+      return res.status(404).json({ message: 'Type of Organization not found' });
+    }
 
-    if (!updated) return res.status(404).json({ message: "Type not found" });
+    // Admin can't edit SuperAdmin-created TypeOfOrganization
+    if (req.userRole === 'Admin' && typeOfOrganization.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot edit TypeOfOrganization created by SuperAdmin' });
+    }
 
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    typeOfOrganization.name = name || typeOfOrganization.name;
+    await typeOfOrganization.save();
+
+    res.status(200).json({ message: 'Type of Organization updated successfully', typeOfOrganization });
+  } catch (error) {
+    console.error('Error updating Type of Organization:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
+
 // 👉 Delete Type of Organisation by ID
-app.delete('/type-of-organisation/:id', async (req, res) => {
+app.delete('/typeoforganization/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await TypeOfOrganisation.findByIdAndDelete(req.params.id);
+    const typeOfOrganization = await TypeOfOrganization.findById(req.params.id);
+    if (!typeOfOrganization) {
+      return res.status(404).json({ message: 'Type of Organization not found' });
+    }
 
-    if (!deleted) return res.status(404).json({ message: "Type not found" });
+    // Admin can't delete SuperAdmin-created TypeOfOrganization
+    if (req.userRole === 'Admin' && typeOfOrganization.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot delete TypeOfOrganization created by SuperAdmin' });
+    }
 
-    res.json({ message: "Type deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await TypeOfOrganization.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Type of Organization deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting Type of Organization:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
 // 👉 Create Activate/Deactivate Status
-app.post('/api/activate-status', async (req, res) => {
+app.post('/activestatus', verifyToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    const existing = await ActivateStatus.findOne({ name });
-    if (existing) return res.status(400).json({ message: "Status already exists" });
+    if (!name) {
+      return res.status(400).json({ message: 'Name of the active status is required' });
+    }
 
-    const status = new ActivateStatus({ name });
-    await status.save();
-
-    res.status(201).json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 👉 Get All Activate/Deactivate Status
-app.get('/api/activate-status', async (req, res) => {
-  try {
-    const statusList = await ActivateStatus.find();
-    res.json(statusList);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 👉 Edit Activate/Deactivate Status by ID
-app.put('/api/activate-status/:id', async (req, res) => {
-  try {
-    const { name } = req.body;
-
-    const updated = await ActivateStatus.findByIdAndUpdate(
-      req.params.id,
-      { name },
-      { new: true }
-    );
-
-    if (!updated) return res.status(404).json({ message: "Status not found" });
-
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 👉 Delete Activate/Deactivate Status by ID
-app.delete('/api/activate-status/:id', async (req, res) => {
-  try {
-    const deleted = await ActivateStatus.findByIdAndDelete(req.params.id);
-
-    if (!deleted) return res.status(404).json({ message: "Status not found" });
-
-    res.json({ message: "Status deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-const multer = require('multer');
-const path = require('path');
-
-// Storage config
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Make sure this folder exists
-  },
-  filename: function (req, file, cb) {
-    const uniqueName = Date.now() + '-' + file.originalname;
-    cb(null, uniqueName);
-  }
-});
-
-const upload = multer({ storage });
-
-
-
-// 👉 Create Profile
-app.post('/api/profile', upload.single('image'), async (req, res) => {
-  try {
-    const {
-      fullName,
-      dateOfBirth,
-      gender,
-      jobType,
-      department,
-      organization,
-      contact,
-      email
-    } = req.body;
-
-    const profile = new Profile({
-      image: req.file?.filename || '',
-      fullName,
-      dateOfBirth,
-      gender,
-      jobType,
-      department,
-      organization,
-      contact,
-      email
+    const newActiveStatus = new ActiveStatus({
+      name,
+      createdBy: req.userId,
+      createdByRole: req.userRole
     });
 
-    await profile.save();
-    res.status(201).json(profile);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    await newActiveStatus.save();
+
+    res.status(201).json({ message: 'Active Status created successfully', activeStatus: newActiveStatus });
+  } catch (error) {
+    console.error('Error creating Active Status:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 
-app.post('/api/logout', (req, res) => {
-  // Frontend should just clear the token
-  res.json({ message: "Logged out successfully" });
+
+// 👉 Get All Activate/Deactivate Status
+app.get('/activestatus', verifyToken, async (req, res) => {
+  try {
+    let query = {};
+
+    if (req.userRole === 'Admin') {
+      query.createdByRole = { $in: ['Admin', 'SuperAdmin'] };
+    } else if (req.userRole === 'SuperAdmin') {
+      query.createdByRole = 'SuperAdmin';
+    } else {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const activeStatuses = await ActiveStatus.find(query);
+    res.status(200).json(activeStatuses);
+  } catch (error) {
+    console.error('Error fetching Active Status:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
 });
+
+
+// 👉 Edit Activate/Deactivate Status by ID
+app.put('/activestatus/:id', verifyToken, async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    const activeStatus = await ActiveStatus.findById(req.params.id);
+    if (!activeStatus) {
+      return res.status(404).json({ message: 'Active Status not found' });
+    }
+
+    // Admin can't edit SuperAdmin-created ActiveStatus
+    if (req.userRole === 'Admin' && activeStatus.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot edit ActiveStatus created by SuperAdmin' });
+    }
+
+    activeStatus.name = name || activeStatus.name;
+    await activeStatus.save();
+
+    res.status(200).json({ message: 'Active Status updated successfully', activeStatus });
+  } catch (error) {
+    console.error('Error updating Active Status:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
+// 👉 Delete Activate/Deactivate Status by ID
+app.delete('/activestatus/:id', verifyToken, async (req, res) => {
+  try {
+    const activeStatus = await ActiveStatus.findById(req.params.id);
+    if (!activeStatus) {
+      return res.status(404).json({ message: 'Active Status not found' });
+    }
+
+    // Admin can't delete SuperAdmin-created ActiveStatus
+    if (req.userRole === 'Admin' && activeStatus.createdByRole === 'SuperAdmin') {
+      return res.status(403).json({ message: 'Admins cannot delete ActiveStatus created by SuperAdmin' });
+    }
+
+    await ActiveStatus.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Active Status deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting Active Status:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
 
 
 const PORT =  3000;
